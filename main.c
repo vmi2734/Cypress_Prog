@@ -1,11 +1,8 @@
-
-
 #include "cy_pdl.h"
 #include "cyhal.h"
 #include "cybsp.h"
 #include "cy_retarget_io.h"
 #include <stdlib.h>
-
 
 /*******************************************************************************
 * Macros
@@ -19,66 +16,55 @@
 
 #define GPIO_INTERRUPT_PRIORITY (7u)
 
-/* LED3 */
-#define PWM_FREQUENCY (0.5f)
+/* LED3 parameters*/
+#define PWM_FREQUENCY_DEF_LED3 (0.5f)
+#define PWM_DUTY_CYCLE_DEF_LED3 (40.0f)
 
-#define PWM_DUTY_CYCLE (40.0f)
+/* LED4 parameters*/
+#define PWM_FREQUENCY_DEF_LED4 (2.0f)
+#define PWM_DUTY_CYCLE_DEF_LED4 (100.0f)
 
-/* LED4 */
-#define PWM_FREQUENCY1 (2.0f)
+/* Parameters for "On" command*/
+#define PWM_FREQUENCY_ON (50.0f)
 
-#define PWM_DUTY_CYCLE1 (100.0f)
-
-
+/* State machine */
 typedef enum
 {
-    MESSAGE_ENTER_NEW,
-    MESSAGE_On_LED,
-	MESSAGE_Off_LED,
-	MESSAGE_DS,
-	MESSAGE_Fq,
-    MESSAGE_NOT_READY,
-	MESSAGE_NOT_READY_Fq,
-	MESSAGE_NOT_READY_DS,
-	MESSAGE_HELP,
-	MESSAGE_Blinky
+    MESSAGE_ENTER_NEW, 		//Start to enter new command
+    MESSAGE_On_LED,			//"On LED(number)"
+	MESSAGE_Off_LED,		//"Off LED(number)"
+	MESSAGE_DS,				//Start to enter Duty Cycle
+	MESSAGE_Fq,				//Start to enter Frequency
+    MESSAGE_NOT_READY,		//Enter new command
+	MESSAGE_NOT_READY_Fq,	//Enter Frequency
+	MESSAGE_NOT_READY_DS,	//Enter Duty Cycle
+	MESSAGE_Blinky			//"Blink LED(number)"
 } message_status_t;
 
 /*******************************************************************************
 * Function Prototypes
 *******************************************************************************/
-void pwm_LED3(float DS, float Fq);
-void pwm_LED4(float DS, float Fq);
-cy_rslt_t Enter_MSG(uint8_t message[], uint8_t msg_size);
-static void gpio_interrupt_handler(void *handler_arg, cyhal_gpio_event_t event);
+void pwm_LEDs(cyhal_pwm_t pwm_control, float DS, float Fq); //Function to On PWN LED4
+
+cy_rslt_t Enter_MSG(uint8_t message[], uint8_t msg_size);	//Enter message
+
+static void gpio_interrupt_handler(void *handler_arg, cyhal_gpio_event_t event); //interrupt user_button
 
 /*******************************************************************************
 * Global Variables
 *******************************************************************************/
-bool timer_interrupt_flag = false;
-bool led_blink_active_flag = true;
-
 volatile bool gpio_intr_flag = false;
 
-/* Variable for storing character read from terminal */
-uint8_t uart_read_value;
 uint8_t user_led;
 
-
-cyhal_pwm_t pwm_led_control;
-cyhal_pwm_t pwm_led_control1;
+cyhal_pwm_t pwm_led_control_LED3;
+cyhal_pwm_t pwm_led_control_LED4;
 
 CY_ALIGN(4) uint8_t message[COMMAND_SIZE];
 
 /*******************************************************************************
 * Function Name: main
 ********************************************************************************
-* Summary:
-* This is the main function for CM4 CPU. It sets up a timer to trigger a
-* periodic interrupt. The main while loop checks for the status of a flag set
-* by the interrupt and toggles an LED at 1Hz to create an LED blinky. The
-* while loop also checks whether the 'Enter' key was pressed and
-* stops/restarts LED blinking.
 *
 * Parameters:
 *  none
@@ -133,39 +119,30 @@ int main(void)
     /* Enable global interrupts */
     __enable_irq();
 
-
-    /* \x1b[2J\x1b[;H - ANSI ESC sequence for clear screen */
-    printf("\x1b[2J\x1b[;H");
-
-    printf("****************** "
-           "PSoC 6 MCU: Work with LEDs, PWM, UART"
-           "****************** \r\n\n");
-
-    result = cyhal_pwm_init(&pwm_led_control, CYBSP_USER_LED, NULL);
+    result = cyhal_pwm_init(&pwm_led_control_LED3, CYBSP_USER_LED, NULL);
     if(CY_RSLT_SUCCESS != result)
     {
-    	printf("API cyhal_pwm_init failed with error code: %lu\r\n", (unsigned long) result);
     	CY_ASSERT(false);
     }
 
-    result = cyhal_pwm_init(&pwm_led_control1, CYBSP_USER_LED2, NULL);
+    result = cyhal_pwm_init(&pwm_led_control_LED4, CYBSP_USER_LED2, NULL);
     if(CY_RSLT_SUCCESS != result)
     {
-    	printf("API cyhal_pwm_init failed with error code: %lu\r\n", (unsigned long) result);
     	CY_ASSERT(false);
     }
 
-	pwm_LED3(((100.0f) - PWM_DUTY_CYCLE), PWM_FREQUENCY);
-	pwm_LED4(((100.0f) - PWM_DUTY_CYCLE1), PWM_FREQUENCY1);
+    /* First initialization*/
+    pwm_LEDs(pwm_led_control_LED3, ((100.0f) - PWM_DUTY_CYCLE_DEF_LED3), PWM_FREQUENCY_DEF_LED3);
+    pwm_LEDs(pwm_led_control_LED4, ((100.0f) - PWM_DUTY_CYCLE_DEF_LED4), PWM_FREQUENCY_DEF_LED4);
 
     for (;;)
     {
+    	//Interrupt check
     	if(gpio_intr_flag == true)
     	{
     		gpio_intr_flag = false;
-    		printf("Button entered! \r\n\n");
-    		pwm_LED3(((100.0f) - PWM_DUTY_CYCLE), PWM_FREQUENCY);
-    		pwm_LED4(((100.0f) - PWM_DUTY_CYCLE1), PWM_FREQUENCY1);
+    		pwm_LEDs(pwm_led_control_LED3, ((100.0f) - PWM_DUTY_CYCLE_DEF_LED3), PWM_FREQUENCY_DEF_LED3);
+    		pwm_LEDs(pwm_led_control_LED4, ((100.0f) - PWM_DUTY_CYCLE_DEF_LED4), PWM_FREQUENCY_DEF_LED4);
     		msg_status = MESSAGE_ENTER_NEW;
     	}
 
@@ -173,7 +150,6 @@ int main(void)
     	{
     	case MESSAGE_ENTER_NEW:
     		msg_size = 0;
-    		printf("\r\nCommand:\r\n");
     		uart_result = Enter_MSG(message, msg_size);
     		msg_status = MESSAGE_NOT_READY;
     		break;
@@ -217,23 +193,13 @@ int main(void)
     				}
     				else
     				{
-    					msg_status = MESSAGE_HELP;
+    					msg_status = MESSAGE_ENTER_NEW;
     				}
     			}
     			else
     			{
     				cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
     				msg_size++;
-    				/* Check if size of the message  exceeds COMMAND_SIZE
-    				 * (inclusive of the string terminating character '\0') */
-    				if (msg_size > (COMMAND_SIZE - 1))
-    				{
-    					printf("\r\n\nMessage length exceeds 20 characters!!!"
-    	                       " Please enter a shorter message\r\nor edit the macro"
-    	                       " COMMAND_SIZE to suit your message size\r\n");
-    					msg_status = MESSAGE_ENTER_NEW;
-    					break;
-    				}
     			}
     		}
     		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
@@ -244,7 +210,6 @@ int main(void)
     	case MESSAGE_DS:
 
     		msg_size = 0;
-    		printf("\r\nDuty Cycle:\r\n");
     		uart_result = Enter_MSG(message, msg_size);
     		msg_status = MESSAGE_NOT_READY_DS;
 
@@ -262,7 +227,6 @@ int main(void)
     				if(user_led == 1 || user_led == 2)
     				{
     					Duty_Cycle = (float) atof((char*)message);
-    					printf("\nDuty Cycle = %g\n", Duty_Cycle);
     					msg_status = MESSAGE_On_LED;
     				}
 
@@ -275,16 +239,6 @@ int main(void)
     			{
     				cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
     				msg_size++;
-    	            /* Check if size of the message  exceeds COMMAND_SIZE
-    	             * (inclusive of the string terminating character '\0')*/
-    				if (msg_size > (COMMAND_SIZE - 1))
-    				{
-    					printf("\r\n\nMessage length exceeds 20 characters!!!"
-    	                	   " Please enter a shorter message\r\nor edit the macro"
-    	                	   " COMMAND_SIZE to suit your message size\r\n");
-    					msg_status = MESSAGE_DS;
-    					break;
-    				}
     			}
     		}
     		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
@@ -295,16 +249,16 @@ int main(void)
 
     	case MESSAGE_On_LED:
 
-    		if(user_led == 1) pwm_LED3(100.0f - Duty_Cycle, 50.0);
-    		else if(user_led == 2) pwm_LED4(100.0f - Duty_Cycle, 50.0);
+    		if(user_led == 1) pwm_LEDs(pwm_led_control_LED3, 100.0f - Duty_Cycle, PWM_FREQUENCY_ON);
+    		else if(user_led == 2) pwm_LEDs(pwm_led_control_LED4, 100.0f - Duty_Cycle, PWM_FREQUENCY_ON);
     		msg_status = MESSAGE_ENTER_NEW;
 
     		break;
 
     	case MESSAGE_Off_LED:
 
-    		if(user_led == 3) cyhal_pwm_stop(&pwm_led_control);
-    		else if(user_led == 4)  cyhal_pwm_stop(&pwm_led_control1);
+    		if(user_led == 3) cyhal_pwm_stop(&pwm_led_control_LED3);
+    		else if(user_led == 4)  cyhal_pwm_stop(&pwm_led_control_LED4);
     		msg_status = MESSAGE_ENTER_NEW;
 
     		break;
@@ -312,7 +266,6 @@ int main(void)
     	case MESSAGE_Fq:
 
     		msg_size = 0;
-    		printf("\r\nFrequency:\r\n");
     		uart_result = Enter_MSG(message, msg_size);
     		msg_status = MESSAGE_NOT_READY_Fq;
 
@@ -327,23 +280,12 @@ int main(void)
     			{
     				message[msg_size]='\0';
     				Freq = (float) atof((char*)message);
-    				printf("\nFrequency = %g Hz\n", Freq);
     				msg_status = MESSAGE_Blinky;
     			}
     			else
     			{
     				cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
     				msg_size++;
-    				/* Check if size of the message  exceeds COMMAND_SIZE
-    				 * (inclusive of the string terminating character '\0')*/
-    				if (msg_size > (COMMAND_SIZE - 1))
-    				{
-    					printf("\r\n\nFq length exceeds 20 characters!!!"
-    	                	   " Please enter a shorter message\r\nor edit the macro"
-    	                	   " COMMAND_SIZE to suit your message size\r\n");
-    					msg_status = MESSAGE_Fq;
-    					break;
-    				}
     			}
     		}
     		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
@@ -354,28 +296,8 @@ int main(void)
 
     	case MESSAGE_Blinky:
 
-    		if(user_led == 5) pwm_LED3(100.0f - Duty_Cycle, Freq);
-    		else if(user_led == 6) pwm_LED4(100.0f - Duty_Cycle, Freq);
-    		msg_status = MESSAGE_ENTER_NEW;
-
-    		break;
-
-    	case MESSAGE_HELP:
-
-    		printf("****************** "
-    		       "HELP MENU"
-    		       "****************** \r\n\n");
-    		printf("****************** "
-    		       "Please, enter one of these command:"
-    		       "****************** \r\n\n");
-    		printf("_________***********________\r\n\n "
-    		       "1. *On LED3* - enable LED3;\r\n "
-    			   "2. *On LED4* - enable LED4;\r\n "
-    			   "3. *Off LED3* - disable LED3;\r\n "
-    			   "4. *Off LED4* - disable LED4;\r\n "
-    			   "5. *Blink LED3* - blink LED3;\r\n "
-    			   "6. *Blink LED4* - blink LED4;\r\n "
-    			   "_________***********________\r\n\n ");
+    		if(user_led == 5) pwm_LEDs(pwm_led_control_LED3, 100.0f - Duty_Cycle, Freq);
+    		else if(user_led == 6) pwm_LEDs(pwm_led_control_LED4, 100.0f - Duty_Cycle, Freq);
     		msg_status = MESSAGE_ENTER_NEW;
 
     		break;
@@ -393,40 +315,19 @@ static void gpio_interrupt_handler(void *handler_arg, cyhal_gpio_irq_event_t eve
     gpio_intr_flag = true;
 }
 
- void pwm_LED3(float DS, float Fq)
-{
-	 cy_rslt_t result;
-
-	     /* Set the PWM output frequency and duty cycle */
-	     result = cyhal_pwm_set_duty_cycle(&pwm_led_control, DS, Fq);
-	     if(CY_RSLT_SUCCESS != result)
-	     {
-	         printf("API cyhal_pwm_set_duty_cycle failed with error code: %lu\r\n", (unsigned long) result);
-	         CY_ASSERT(false);
-	     }
-	     /* Start the PWM */
-	     result = cyhal_pwm_start(&pwm_led_control);
-	     if(CY_RSLT_SUCCESS != result)
-	     {
-	         printf("API cyhal_pwm_start failed with error code: %lu\r\n", (unsigned long) result);
-	         CY_ASSERT(false);
-	     }
-}
- void pwm_LED4(float DS, float Fq)
+ void pwm_LEDs(cyhal_pwm_t pwm_control, float DS, float Fq)
  {
   	  cy_rslt_t result;
  	     /* Set the PWM output frequency and duty cycle */
- 	     result = cyhal_pwm_set_duty_cycle(&pwm_led_control1, DS, Fq);
+ 	     result = cyhal_pwm_set_duty_cycle(&pwm_control, DS, Fq);
  	     if(CY_RSLT_SUCCESS != result)
  	     {
- 	         printf("API cyhal_pwm_set_duty_cycle failed with error code: %lu\r\n", (unsigned long) result);
  	         CY_ASSERT(false);
  	     }
  	     /* Start the PWM */
- 	     result = cyhal_pwm_start(&pwm_led_control1);
+ 	     result = cyhal_pwm_start(&pwm_control);
  	     if(CY_RSLT_SUCCESS != result)
  	     {
- 	         printf("API cyhal_pwm_start failed with error code: %lu\r\n", (unsigned long) result);
  	         CY_ASSERT(false);
  	     }
  }
