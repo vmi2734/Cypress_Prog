@@ -1,4 +1,4 @@
-#include "cy_pdl.h"
+
 #include "cyhal.h"
 #include "cybsp.h"
 #include "cy_retarget_io.h"
@@ -8,7 +8,7 @@
 * Macros
 *******************************************************************************/
 
-#define COMMAND_SIZE                    (20u)
+#define COMMAND_SIZE                    (25u)
 
 #define ASCII_RETURN_CARRIAGE               (0x0D)
 
@@ -33,11 +33,7 @@ typedef enum
     MESSAGE_ENTER_NEW, 		//Start to enter new command
     MESSAGE_On_LED,			//"On LED(number)"
 	MESSAGE_Off_LED,		//"Off LED(number)"
-	MESSAGE_DS,				//Start to enter Duty Cycle
-	MESSAGE_Fq,				//Start to enter Frequency
     MESSAGE_NOT_READY,		//Enter new command
-	MESSAGE_NOT_READY_Fq,	//Enter Frequency
-	MESSAGE_NOT_READY_DS,	//Enter Duty Cycle
 	MESSAGE_Blinky			//"Blink LED(number)"
 } message_status_t;
 
@@ -62,6 +58,9 @@ cyhal_pwm_t pwm_led_control_LED4;
 
 CY_ALIGN(4) uint8_t message[COMMAND_SIZE];
 
+char separator[1] = ",";
+
+
 /*******************************************************************************
 * Function Name: main
 ********************************************************************************
@@ -81,6 +80,8 @@ int main(void)
     message_status_t msg_status = MESSAGE_ENTER_NEW;
 
     uint8_t msg_size = 0;
+
+    char *istr;
 
     float Duty_Cycle = 0.0f;
     float Freq = 0.0f;
@@ -161,40 +162,54 @@ int main(void)
     			if (message[msg_size] == ASCII_RETURN_CARRIAGE)
     			{
     				message[msg_size]='\0';
-    				if((!strcmp((char*)message, "On LED3")))
-    				{
-    					user_led = 1;
-    					msg_status = MESSAGE_DS;
-    				}
-    				else if ((!strcmp((char*)message, "On LED4")))
-    				{
-    					user_led = 2;
-    					msg_status = MESSAGE_DS;
-    				}
-    				else if ((!strcmp((char*)message, "Off LED3")))
-    				{
-    					user_led = 3;
-    					msg_status = MESSAGE_Off_LED;
-    				}
-    				else if ((!strcmp((char*)message, "Off LED4")))
-    				{
-    					user_led = 4;
-    					msg_status = MESSAGE_Off_LED;
-    				}
-    				else if ((!strcmp((char*)message, "Blink LED3")))
-    				{
-    					user_led = 5;
-    					msg_status = MESSAGE_DS;
-    				}
-    				else if ((!strcmp((char*)message, "Blink LED4")))
-    				{
-    					user_led = 6;
-    					msg_status = MESSAGE_DS;
-    				}
-    				else
-    				{
-    					msg_status = MESSAGE_ENTER_NEW;
-    				}
+
+    			    istr = strtok((char*)message, separator);
+    			    while (istr != NULL){
+    			    	if ((!strcmp(istr, "Off LED3")))
+    			    	    {
+    			    	    	user_led = 3;
+    			    	    	msg_status = MESSAGE_Off_LED;
+    			    	    	break;
+    			    	    	}
+    			    	 else if ((!strcmp((char*)message, "Off LED4")))
+    			    	   {
+    			    	    	user_led = 4;
+    			    	    	msg_status = MESSAGE_Off_LED;
+    			    	    	break;
+    			    	   }
+    			    	 else if(!strcmp(istr, "On LED3")){
+    			    		 user_led = 1;
+    			    		 istr = strtok(NULL, separator);
+    			    		 Duty_Cycle = (float) atof(istr);
+    			    		 msg_status = MESSAGE_On_LED;
+    			    		 break;
+    			    	 }
+    			    	 else if(!strcmp(istr, "On LED4")){
+    			    		 user_led = 2;
+    			    		 istr = strtok(NULL, separator);
+    			    		 Duty_Cycle = (float) atof(istr);
+    			    		 msg_status = MESSAGE_On_LED;
+    			    		 break;
+    			    	 }
+    			    	 else if(!strcmp(istr, "Blink LED3")){
+    			    		 user_led = 5;
+    			    		 istr = strtok(NULL, separator);
+    			    		 Duty_Cycle = (float) atof(istr);
+    			    		 istr = strtok(NULL, separator);
+    			    		 Freq = (float) atof(istr);
+    			    		 msg_status = MESSAGE_Blinky;
+    			    		 break;
+    			    	 }
+    			    	 else if(!strcmp(istr, "Blink LED4")){
+    			    		 user_led = 6;
+    			    		 istr = strtok(NULL, separator);
+    			    		 Duty_Cycle = (float) atof(istr);
+    			    		 istr = strtok(NULL, separator);
+    			    		 Freq = (float) atof(istr);
+    			    		 msg_status = MESSAGE_Blinky;
+    			    		 break;
+    			    	 }
+    			    }
     			}
     			else
     			{
@@ -205,46 +220,6 @@ int main(void)
     		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
     	                                  &message[msg_size],
     	                                  UART_TIMEOUT_MS);
-    		break;
-
-    	case MESSAGE_DS:
-
-    		msg_size = 0;
-    		uart_result = Enter_MSG(message, msg_size);
-    		msg_status = MESSAGE_NOT_READY_DS;
-
-    		break;
-
-    	case MESSAGE_NOT_READY_DS:
-
-    		uart_status = cyhal_uart_is_rx_active(&cy_retarget_io_uart_obj);
-    		if ((!uart_status) && (uart_result == CY_RSLT_SUCCESS))
-    		{
-    			if (message[msg_size] == ASCII_RETURN_CARRIAGE)
-    			{
-    				message[msg_size] ='\0';
-
-    				if(user_led == 1 || user_led == 2)
-    				{
-    					Duty_Cycle = (float) atof((char*)message);
-    					msg_status = MESSAGE_On_LED;
-    				}
-
-    				else if(user_led == 5 || user_led == 6)
-    				{
-    					msg_status = MESSAGE_Fq;
-    				}
-    			}
-    			else
-    			{
-    				cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
-    				msg_size++;
-    			}
-    		}
-    		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
-    	                	              &message[msg_size],
-    	                	              UART_TIMEOUT_MS);
-
     		break;
 
     	case MESSAGE_On_LED:
@@ -263,36 +238,6 @@ int main(void)
 
     		break;
 
-    	case MESSAGE_Fq:
-
-    		msg_size = 0;
-    		uart_result = Enter_MSG(message, msg_size);
-    		msg_status = MESSAGE_NOT_READY_Fq;
-
-    		break;
-
-    	case MESSAGE_NOT_READY_Fq:
-
-    		uart_status = cyhal_uart_is_rx_active(&cy_retarget_io_uart_obj);
-    		if ((!uart_status) && (uart_result == CY_RSLT_SUCCESS))
-    		{
-    			if (message[msg_size] == ASCII_RETURN_CARRIAGE)
-    			{
-    				message[msg_size]='\0';
-    				Freq = (float) atof((char*)message);
-    				msg_status = MESSAGE_Blinky;
-    			}
-    			else
-    			{
-    				cyhal_uart_putc(&cy_retarget_io_uart_obj, message[msg_size]);
-    				msg_size++;
-    			}
-    		}
-    		uart_result = cyhal_uart_getc(&cy_retarget_io_uart_obj,
-    	                	              &message[msg_size],
-    	                	              UART_TIMEOUT_MS);
-
-    		break;
 
     	case MESSAGE_Blinky:
 
